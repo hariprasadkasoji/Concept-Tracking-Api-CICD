@@ -36,12 +36,25 @@ jobs:
         shell: powershell
         run: |
           Import-Module WebAdministration
-
+      
           $appPool = "CONCEPT-TRACKING-API-CICD"
-
-          if ((Get-WebAppPoolState -Name $appPool).Value -eq "Started") {
+      
+          $state = (Get-WebAppPoolState -Name $appPool).Value
+      
+          if ($state -eq "Started") {
+      
               Stop-WebAppPool -Name $appPool
-              Start-Sleep -Seconds 5
+      
+              Write-Host "Waiting for app pool to stop..."
+      
+              do {
+                  Start-Sleep -Seconds 2
+                  $state = (Get-WebAppPoolState -Name $appPool).Value
+                  Write-Host "Current state: $state"
+      
+              } while ($state -ne "Stopped")
+      
+              Write-Host "App pool stopped successfully."
           }
           else {
               Write-Host "App pool already stopped."
@@ -83,7 +96,12 @@ jobs:
         shell: powershell
         run: |
           Import-Module WebAdministration
+      
+          Start-Sleep -Seconds 3
+      
           Start-WebAppPool -Name "CONCEPT-TRACKING-API-CICD"
+      
+          Write-Host "App pool started."
 
       - name: Health Check
         shell: powershell
