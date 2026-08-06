@@ -1,0 +1,104 @@
+name: Build and Deploy Backend
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Verify Python
+        run: py --version
+
+      - name: Install dependencies
+        run: py -m pip install -r requirements.txt
+
+      - name: Check syntax
+        run: py -m py_compile app/main.py
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout latest code
+        uses: actions/checkout@v5
+
+      - name: Stop IIS App Pool
+        shell: powershell
+        run: |
+          Import-Module WebAdministration
+
+          $appPool = "CONCEPT-TRACKING-UI-CICD"
+
+          if ((Get-WebAppPoolState -Name $appPool).Value -eq "Started") {
+              Stop-WebAppPool -Name $appPool
+              Start-Sleep -Seconds 5
+          }
+          else {
+              Write-Host "App pool already stopped."
+          }
+
+      - name: Copy backend files
+        shell: powershell
+        run: |
+          robocopy `
+            "$env:GITHUB_WORKSPACE" `
+            "C:\apps\concept-tracking-CICD\api" `
+            /MIR `
+            /XD venv .git __pycache__ `
+            /XF .env
+
+          if ($LASTEXITCODE -ge 8) {
+              exit 1
+          }
+          else {
+              exit 0
+          }
+
+      - name: Install Python dependencies
+        working-directory: C:\apps\concept-tracking-CICD\api
+        shell: powershell
+        run: |
+          .\venv\Scripts\python.exe -m pip install -r requirements.txt
+
+      - name: Start IIS App Pool
+        shell: powershell
+        run: |
+          Import-Module WebAdministration
+          Start-WebAppPool -Name "CONCEPT-TRACKING-UI-CICD"
+
+      - name: Health Check
+        shell: powershell
+        run: |
+          $maxAttempts = 30
+
+          foreach ($i in 1..$maxAttempts) {
+
+              try {
+
+                  $response = curl.exe -s -o NUL -w "%{http_code}" https://localhost:6400/
+
+                  if ($response -eq "200") {
+                      Write-Host "Backend is healthy."
+                      exit 0
+                  }
+
+              } catch {}
+
+              Start-Sleep -Seconds 5
+          }
+
+          Write-Host "Health check failed."
+
+          Get-Content "C:\apps\concept-tracking-CICD\api\iislogs\fastapi.log" -Tail 50
+
+          exit 1
