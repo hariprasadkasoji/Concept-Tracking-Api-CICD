@@ -129,25 +129,33 @@ jobs:
         run: |
           $maxAttempts = 30
           $healthy = $false
+          $startTime = Get-Date
+      
           foreach ($i in 1..$maxAttempts) {
               try {
                   $response = curl.exe -k -s -o NUL -w "%{http_code}" https://localhost:6400/docs
-                  if ($response -eq "200") {
-                      Write-Host "Backend is healthy."
-                      $healthy = $true
-                      break
-                  }
-              } catch {}
+              } catch {
+                  $response = "ERR"
+              }
+      
+              $elapsed = [math]::Round(((Get-Date) - $startTime).TotalSeconds, 1)
+              Write-Host "Attempt $i/$maxAttempts (${elapsed}s elapsed): HTTP $response"
+      
+              if ($response -eq "200") {
+                  Write-Host "Backend is healthy after ${elapsed}s."
+                  $healthy = $true
+                  break
+              }
               Start-Sleep -Seconds 5
           }
-
+      
           if (-not $healthy) {
-              Write-Host "Health check failed."
+              Write-Host "Health check failed after $maxAttempts attempts."
               $logFolder = "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD\iislogs"
               $latestLog = Get-ChildItem -Path $logFolder -Filter "fastapi_*.log" -ErrorAction SilentlyContinue |
                            Sort-Object LastWriteTime -Descending |
                            Select-Object -First 1
-
+      
               if ($latestLog) {
                   Write-Host "Showing tail of: $($latestLog.FullName)"
                   Get-Content $latestLog.FullName -Tail 50
