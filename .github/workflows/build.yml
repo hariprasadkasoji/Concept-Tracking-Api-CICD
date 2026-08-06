@@ -37,7 +37,7 @@ jobs:
         run: |
           Import-Module WebAdministration
 
-          $appPool = "CONCEPT-TRACKING-UI-CICD"
+          $appPool = "CONCEPT-TRACKING-API-CICD"
 
           if ((Get-WebAppPoolState -Name $appPool).Value -eq "Started") {
               Stop-WebAppPool -Name $appPool
@@ -94,7 +94,7 @@ jobs:
 
               try {
 
-                  $response = curl.exe -s -o NUL -w "%{http_code}" https://localhost:6400/docs
+                  $response = curl.exe -s -o NUL -w "%{http_code}" https://172.19.31.8:6400/docs
 
                   if ($response -eq "200") {
                       Write-Host "Backend is healthy."
