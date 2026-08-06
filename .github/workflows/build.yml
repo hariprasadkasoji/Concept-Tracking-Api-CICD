@@ -76,6 +76,18 @@ jobs:
           else {
               exit 0
           }
+      - name: Ensure IIS logs folder exists
+        shell: powershell
+        run: |
+          $logFolder = "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD\iislogs"
+      
+          if (!(Test-Path $logFolder)) {
+              New-Item -ItemType Directory -Path $logFolder | Out-Null
+              Write-Host "Created iislogs folder."
+          }
+          else {
+              Write-Host "iislogs folder already exists."
+          }
 
       - name: Create virtual environment if needed
         shell: powershell
