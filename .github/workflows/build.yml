@@ -27,6 +27,7 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: self-hosted
+    environment: development   # <-- pulls secrets from this Environment
 
     steps:
       - name: Checkout latest code
@@ -36,24 +37,16 @@ jobs:
         shell: powershell
         run: |
           Import-Module WebAdministration
-      
           $appPool = "CONCEPT-TRACKING-API-CICD"
-      
           $state = (Get-WebAppPoolState -Name $appPool).Value
-      
           if ($state -eq "Started") {
-      
               Stop-WebAppPool -Name $appPool
-      
               Write-Host "Waiting for app pool to stop..."
-      
               do {
                   Start-Sleep -Seconds 2
                   $state = (Get-WebAppPoolState -Name $appPool).Value
                   Write-Host "Current state: $state"
-      
               } while ($state -ne "Stopped")
-      
               Write-Host "App pool stopped successfully."
           }
           else {
@@ -76,11 +69,28 @@ jobs:
           else {
               exit 0
           }
+
+      - name: Create .env file from secrets
+        shell: powershell
+        run: |
+          $secretsJson = '${{ toJSON(secrets) }}' | ConvertFrom-Json
+          $envPath = "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD\.env"
+
+          $lines = @()
+          foreach ($prop in $secretsJson.PSObject.Properties) {
+              if ($prop.Name -ne "github_token") {
+                  $lines += "$($prop.Name)=$($prop.Value)"
+              }
+          }
+
+          $lines | Out-File -FilePath $envPath -Encoding utf8
+
+          Write-Host ".env file written with $($lines.Count) variables."
+
       - name: Ensure IIS logs folder exists
         shell: powershell
         run: |
           $logFolder = "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD\iislogs"
-      
           if (!(Test-Path $logFolder)) {
               New-Item -ItemType Directory -Path $logFolder | Out-Null
               Write-Host "Created iislogs folder."
@@ -96,7 +106,7 @@ jobs:
           if (!(Test-Path ".\venv")) {
             py -m venv venv
           }
-      
+
       - name: Install dependencies
         shell: powershell
         working-directory: C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD
@@ -108,11 +118,8 @@ jobs:
         shell: powershell
         run: |
           Import-Module WebAdministration
-      
           Start-Sleep -Seconds 3
-      
           Start-WebAppPool -Name "CONCEPT-TRACKING-API-CICD"
-      
           Write-Host "App pool started."
 
       - name: Health Check
@@ -144,8 +151,6 @@ jobs:
                   Get-Content $latestLog.FullName -Tail 50
               } else {
                   Write-Host "No log files found matching 'fastapi_*.log' in $logFolder."
-                  Write-Host "This likely means httpPlatformHandler never started the process at all."
-                  Write-Host "Check: app pool identity permissions on venv/log folder, port binding conflicts, or a bad python.exe path in web.config."
               }
               exit 1
           }
