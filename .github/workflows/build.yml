@@ -64,17 +64,26 @@ jobs:
               exit 0
           }
 
-      - name: Install Python dependencies
-        working-directory: C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD
+      - name: Create virtual environment if needed
         shell: powershell
+        working-directory: C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD
         run: |
+          if (!(Test-Path ".\venv")) {
+            py -m venv venv
+          }
+      
+      - name: Install dependencies
+        shell: powershell
+        working-directory: C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD
+        run: |
+          .\venv\Scripts\python.exe -m pip install --upgrade pip
           .\venv\Scripts\python.exe -m pip install -r requirements.txt
 
       - name: Start IIS App Pool
         shell: powershell
         run: |
           Import-Module WebAdministration
-          Start-WebAppPool -Name "CONCEPT-TRACKING-UI-CICD"
+          Start-WebAppPool -Name "CONCEPT-TRACKING-API-CICD"
 
       - name: Health Check
         shell: powershell
