@@ -72,19 +72,21 @@ jobs:
 
       - name: Create .env file from secrets
         shell: powershell
+        env:
+          SECRETS_JSON: ${{ toJSON(secrets) }}
         run: |
-          $secretsJson = '${{ toJSON(secrets) }}' | ConvertFrom-Json
+          $secretsJson = $env:SECRETS_JSON | ConvertFrom-Json
           $envPath = "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD\.env"
-
+      
           $lines = @()
           foreach ($prop in $secretsJson.PSObject.Properties) {
               if ($prop.Name -ne "github_token") {
                   $lines += "$($prop.Name)=$($prop.Value)"
               }
           }
-
+      
           $lines | Out-File -FilePath $envPath -Encoding utf8
-
+      
           Write-Host ".env file written with $($lines.Count) variables."
 
       - name: Ensure IIS logs folder exists
