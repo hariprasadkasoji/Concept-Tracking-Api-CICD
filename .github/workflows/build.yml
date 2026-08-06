@@ -119,25 +119,33 @@ jobs:
         shell: powershell
         run: |
           $maxAttempts = 30
-
+          $healthy = $false
           foreach ($i in 1..$maxAttempts) {
-
               try {
-
                   $response = curl.exe -k -s -o NUL -w "%{http_code}" https://localhost:6400/docs
-
                   if ($response -eq "200") {
                       Write-Host "Backend is healthy."
-                      exit 0
+                      $healthy = $true
+                      break
                   }
-
               } catch {}
-
               Start-Sleep -Seconds 5
           }
 
-          Write-Host "Health check failed."
+          if (-not $healthy) {
+              Write-Host "Health check failed."
+              $logFolder = "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD\iislogs"
+              $latestLog = Get-ChildItem -Path $logFolder -Filter "fastapi_*.log" -ErrorAction SilentlyContinue |
+                           Sort-Object LastWriteTime -Descending |
+                           Select-Object -First 1
 
-          Get-Content "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD\iislogs\fastapi.log" -Tail 50
-
-          exit 1
+              if ($latestLog) {
+                  Write-Host "Showing tail of: $($latestLog.FullName)"
+                  Get-Content $latestLog.FullName -Tail 50
+              } else {
+                  Write-Host "No log files found matching 'fastapi_*.log' in $logFolder."
+                  Write-Host "This likely means httpPlatformHandler never started the process at all."
+                  Write-Host "Check: app pool identity permissions on venv/log folder, port binding conflicts, or a bad python.exe path in web.config."
+              }
+              exit 1
+          }
