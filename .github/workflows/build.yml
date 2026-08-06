@@ -52,7 +52,7 @@ jobs:
         run: |
           robocopy `
             "$env:GITHUB_WORKSPACE" `
-            "C:\apps\concept-tracking-CICD\api" `
+            "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD" `
             /MIR `
             /XD venv .git __pycache__ `
             /XF .env
@@ -65,7 +65,7 @@ jobs:
           }
 
       - name: Install Python dependencies
-        working-directory: C:\apps\concept-tracking-CICD\api
+        working-directory: C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD
         shell: powershell
         run: |
           .\venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -99,6 +99,6 @@ jobs:
 
           Write-Host "Health check failed."
 
-          Get-Content "C:\apps\concept-tracking-CICD\api\iislogs\fastapi.log" -Tail 50
+          Get-Content "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD\iislogs\fastapi.log" -Tail 50
 
           exit 1
