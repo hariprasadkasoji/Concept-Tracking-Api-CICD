@@ -9,6 +9,7 @@ on:
 jobs:
   build:
     runs-on: self-hosted
+    timeout-minutes: 10
 
     steps:
       - name: Checkout code
@@ -28,6 +29,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: self-hosted
     environment: development   # <-- pulls secrets from this Environment
+    timeout-minutes: 15        # hard ceiling so a hang never runs for hours
 
     steps:
       - name: Checkout latest code
@@ -77,17 +79,51 @@ jobs:
         run: |
           $secretsJson = $env:SECRETS_JSON | ConvertFrom-Json
           $envPath = "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD\.env"
-      
+
           $lines = @()
           foreach ($prop in $secretsJson.PSObject.Properties) {
               if ($prop.Name -ne "github_token") {
                   $lines += "$($prop.Name)=$($prop.Value)"
               }
           }
-      
+
           $lines | Out-File -FilePath $envPath -Encoding utf8
-      
+
           Write-Host ".env file written with $($lines.Count) variables."
+
+      - name: Validate .env has required keys
+        shell: powershell
+        run: |
+          $envPath = "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD\.env"
+          $requiredKeys = @(
+              "AUTH_SECRET_KEY",
+              "AUTH_ALGORITHM",
+              "ACCESS_TOKEN_EXPIRE_MINUTES",
+              "DB_DRIVER",
+              "DB_HOST",
+              "DB_USER",
+              "DB_PASSWORD",
+              "DB_NAME"
+          )
+
+          $envContent = Get-Content $envPath
+          $missing = @()
+
+          foreach ($key in $requiredKeys) {
+              $found = $envContent | Where-Object { $_ -match "^$key=" }
+              if (-not $found) {
+                  $missing += $key
+              }
+          }
+
+          if ($missing.Count -gt 0) {
+              Write-Host "Missing required keys in .env:"
+              $missing | ForEach-Object { Write-Host "  - $_" }
+              Write-Host "Check the secret names in the 'development' Environment match exactly."
+              exit 1
+          }
+
+          Write-Host "All required keys present in .env."
 
       - name: Ensure IIS logs folder exists
         shell: powershell
@@ -130,17 +166,19 @@ jobs:
           $maxAttempts = 30
           $healthy = $false
           $startTime = Get-Date
-      
+
           foreach ($i in 1..$maxAttempts) {
               try {
-                  $response = curl.exe -k -s -o NUL -w "%{http_code}" https://localhost:6400/docs
+                  # --max-time / --connect-timeout bound each call so a hung
+                  # backend can't stall this loop for minutes per attempt.
+                  $response = curl.exe -k -s -o NUL -w "%{http_code}" --max-time 5 --connect-timeout 3 https://localhost:6400/docs
               } catch {
                   $response = "ERR"
               }
-      
+
               $elapsed = [math]::Round(((Get-Date) - $startTime).TotalSeconds, 1)
               Write-Host "Attempt $i/$maxAttempts (${elapsed}s elapsed): HTTP $response"
-      
+
               if ($response -eq "200") {
                   Write-Host "Backend is healthy after ${elapsed}s."
                   $healthy = $true
@@ -148,19 +186,21 @@ jobs:
               }
               Start-Sleep -Seconds 5
           }
-      
+
           if (-not $healthy) {
               Write-Host "Health check failed after $maxAttempts attempts."
               $logFolder = "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD\iislogs"
               $latestLog = Get-ChildItem -Path $logFolder -Filter "fastapi_*.log" -ErrorAction SilentlyContinue |
                            Sort-Object LastWriteTime -Descending |
                            Select-Object -First 1
-      
+
               if ($latestLog) {
                   Write-Host "Showing tail of: $($latestLog.FullName)"
                   Get-Content $latestLog.FullName -Tail 50
               } else {
                   Write-Host "No log files found matching 'fastapi_*.log' in $logFolder."
+                  Write-Host "This likely means httpPlatformHandler never started the process at all."
+                  Write-Host "Check: app pool identity permissions on venv/log folder, port binding conflicts, or a bad python.exe path in web.config."
               }
               exit 1
           }
