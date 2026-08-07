@@ -73,24 +73,24 @@ jobs:
           }
 
       - name: Create .env file from secrets
-      shell: powershell
-      env:
-        SECRETS_JSON: ${{ toJSON(secrets) }}
-      run: |
-        $secretsJson = $env:SECRETS_JSON | ConvertFrom-Json
-        $envPath = "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD\.env"
-    
-        $lines = @()
-        foreach ($prop in $secretsJson.PSObject.Properties) {
-            if ($prop.Name -ne "github_token") {
-                $lines += "$($prop.Name)=$($prop.Value)"
-            }
-        }
-    
-        # Use UTF8 WITHOUT BOM to avoid corrupting the first key
-        [System.IO.File]::WriteAllLines($envPath, $lines, [System.Text.UTF8Encoding]::new($false))
-    
-        Write-Host ".env file written with $($lines.Count) variables."
+        shell: powershell
+        env:
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+        run: |
+          $secretsJson = $env:SECRETS_JSON | ConvertFrom-Json
+          $envPath = "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD\.env"
+      
+          $lines = @()
+          foreach ($prop in $secretsJson.PSObject.Properties) {
+              if ($prop.Name -ne "github_token") {
+                  $lines += "$($prop.Name)=$($prop.Value)"
+              }
+          }
+      
+          # Use UTF8 WITHOUT BOM to avoid corrupting the first key
+          [System.IO.File]::WriteAllLines($envPath, $lines, [System.Text.UTF8Encoding]::new($false))
+      
+          Write-Host ".env file written with $($lines.Count) variables."
 
       - name: Validate .env has required keys
         shell: powershell
