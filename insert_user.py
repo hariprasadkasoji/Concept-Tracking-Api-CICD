@@ -138,7 +138,7 @@ def main():
         conn = get_connection()
 
         while True:
-            print("\n========================")
+            print("\n=========================")
             print(" USER MANAGEMENT MENU")
             print("========================")
 
