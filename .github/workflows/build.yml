@@ -213,9 +213,26 @@ jobs:
       - name: Increment version tag and push
         shell: powershell
         run: |
-          git fetch --tags origin
+          # Locate git.exe (PATH may not include it on self-hosted runners)
+          $git = (Get-Command git.exe -ErrorAction SilentlyContinue).Source
+          if (-not $git) {
+              $candidates = @(
+                  "$env:ProgramFiles\Git\cmd\git.exe",
+                  "${env:ProgramFiles(x86)}\Git\cmd\git.exe",
+                  "$env:LOCALAPPDATA\Programs\Git\cmd\git.exe"
+              )
+              $git = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $git) {
+              Write-Host "git.exe not found."
+              Write-Host "Install Git for Windows system-wide or add it to the SYSTEM PATH, then restart the runner service."
+              exit 1
+          }
+          Write-Host "Using git: $git"
 
-          $latest = git tag --sort=-v:refname | Select-Object -First 1
+          & $git fetch --tags origin
+
+          $latest = (& $git tag --sort=-v:refname) | Select-Object -First 1
           if (-not $latest) {
               $latest = "v0.0.0"
           }
@@ -229,9 +246,9 @@ jobs:
           $newTag = "v$major.$minor.$patch"
           Write-Host "New tag: $newTag"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          & $git config user.name "github-actions[bot]"
+          & $git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git tag $newTag
-          git push origin $newTag
+          & $git tag $newTag
+          & $git push origin $newTag
           Write-Host "Pushed tag $newTag"
