@@ -210,50 +210,47 @@ jobs:
               exit 1
           }
 
-      - name: Increment version tag and push
+      - name: Increment version tag
         shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          DEPLOY_SHA: ${{ github.sha }}
         run: |
-          # Known install location on this runner (per-user install, not on service PATH)
-          $knownGit = "C:\Users\hkasoji\AppData\Local\Programs\Git\cmd\git.exe"
-
-          $git = (Get-Command git.exe -ErrorAction SilentlyContinue).Source
-          if (-not $git -and (Test-Path $knownGit)) {
-              $git = $knownGit
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          $api = "https://api.github.com"
+          $headers = @{
+              Authorization            = "Bearer $env:GITHUB_TOKEN"
+              Accept                   = "application/vnd.github+json"
+              "X-GitHub-Api-Version"   = "2022-11-28"
           }
 
-          if (-not $git) {
-              $candidates = @(
-                  $knownGit,
-                  "$env:ProgramFiles\Git\cmd\git.exe",
-                  "$env:ProgramFiles\Git\bin\git.exe",
-                  "C:\ProgramData\chocolatey\bin\git.exe"
-              )
-              $git = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          # Fetch existing tags
+          $refs = Invoke-RestMethod -Uri "$api/repos/$env:REPO/git/matching-refs/tags/" -Headers $headers
+          $versions = $refs |
+              ForEach-Object { $_.ref -replace '^refs/tags/v', '' } |
+              Where-Object { $_ -match '^\d+\.\d+\.\d+$' } |
+              ForEach-Object { [version]$_ } |
+              Sort-Object -Descending
+
+          if ($versions) {
+              $latest = $versions[0]
+          } else {
+              $latest = [version]"0.0.0"
           }
+          Write-Host "Latest tag: v$latest"
 
-          if (-not $git) {
-              Write-Host "git.exe not found."
-              exit 1
-          }
-          Write-Host "Using git: $git"
-
-          & $git fetch --tags origin
-
-          $latest = (& $git tag --sort=-v:refname) | Select-Object -First 1
-          if (-not $latest) { $latest = "v0.0.0" }
-          Write-Host "Latest tag: $latest"
-
-          $ver = $latest.TrimStart('v')
-          $parts = $ver.Split('.')
-          $major = [int]$parts[0]
-          $minor = [int]$parts[1]
-          $patch = [int]$parts[2] + 1
-          $newTag = "v$major.$minor.$patch"
+          $newTag = "v$($latest.Major).$($latest.Minor).$($latest.Build + 1)"
           Write-Host "New tag: $newTag"
 
-          & $git config user.name "github-actions[bot]"
-          & $git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          & $git tag $newTag
-          & $git push origin $newTag
-          Write-Host "Pushed tag $newTag"
+          # Create lightweight tag on the deployed commit
+          $body = @{ ref = "refs/tags/$newTag"; sha = $env:DEPLOY_SHA } | ConvertTo-Json
+          try {
+              Invoke-RestMethod -Method Post -Uri "$api/repos/$env:REPO/git/refs" `
+                  -Headers $headers -Body $body -ContentType "application/json"
+              Write-Host "Created tag $newTag on commit $env:DEPLOY_SHA"
+          } catch {
+              Write-Host "Failed to create tag: $($_.Exception.Message)"
+              if ($_.ErrorDetails) { Write-Host $_.ErrorDetails.Message }
+              exit 1
+          }
