@@ -213,19 +213,26 @@ jobs:
       - name: Increment version tag and push
         shell: powershell
         run: |
-          # Locate git.exe (PATH may not include it on self-hosted runners)
+          # Known install location on this runner (per-user install, not on service PATH)
+          $knownGit = "C:\Users\hkasoji\AppData\Local\Programs\Git\cmd\git.exe"
+
           $git = (Get-Command git.exe -ErrorAction SilentlyContinue).Source
+          if (-not $git -and (Test-Path $knownGit)) {
+              $git = $knownGit
+          }
+
           if (-not $git) {
               $candidates = @(
+                  $knownGit,
                   "$env:ProgramFiles\Git\cmd\git.exe",
-                  "${env:ProgramFiles(x86)}\Git\cmd\git.exe",
-                  "$env:LOCALAPPDATA\Programs\Git\cmd\git.exe"
+                  "$env:ProgramFiles\Git\bin\git.exe",
+                  "C:\ProgramData\chocolatey\bin\git.exe"
               )
               $git = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           }
+
           if (-not $git) {
               Write-Host "git.exe not found."
-              Write-Host "Install Git for Windows system-wide or add it to the SYSTEM PATH, then restart the runner service."
               exit 1
           }
           Write-Host "Using git: $git"
@@ -233,9 +240,7 @@ jobs:
           & $git fetch --tags origin
 
           $latest = (& $git tag --sort=-v:refname) | Select-Object -First 1
-          if (-not $latest) {
-              $latest = "v0.0.0"
-          }
+          if (-not $latest) { $latest = "v0.0.0" }
           Write-Host "Latest tag: $latest"
 
           $ver = $latest.TrimStart('v')
