@@ -28,12 +28,16 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: self-hosted
+    permissions:
+      contents: write        # required to push tags
     environment: development   # <-- pulls secrets from this Environment
     timeout-minutes: 15        # hard ceiling so a hang never runs for hours
 
     steps:
       - name: Checkout latest code
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0       # full history so tags are available
 
       - name: Stop IIS App Pool
         shell: powershell
@@ -205,3 +209,29 @@ jobs:
               }
               exit 1
           }
+
+      - name: Increment version tag and push
+        shell: powershell
+        run: |
+          git fetch --tags origin
+
+          $latest = git tag --sort=-v:refname | Select-Object -First 1
+          if (-not $latest) {
+              $latest = "v0.0.0"
+          }
+          Write-Host "Latest tag: $latest"
+
+          $ver = $latest.TrimStart('v')
+          $parts = $ver.Split('.')
+          $major = [int]$parts[0]
+          $minor = [int]$parts[1]
+          $patch = [int]$parts[2] + 1
+          $newTag = "v$major.$minor.$patch"
+          Write-Host "New tag: $newTag"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git tag $newTag
+          git push origin $newTag
+          Write-Host "Pushed tag $newTag"
