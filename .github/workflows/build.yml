@@ -62,6 +62,22 @@ jobs:
           fetch-depth: 0       # full history so tags are available
           fetch-tags: true
 
+      - name: Configure Git safe directory
+        # Git refuses to run any command in a repo whose folder owner
+        # doesn't match the current user (CVE-2022-24765 mitigation).
+        # On this runner the workspace is owned by NT AUTHORITY\NETWORK
+        # SERVICE but steps execute as a different account, which trips
+        # this check on every git command below. Marking the workspace
+        # as a safe.directory exception (scoped to this exact path, not
+        # a blanket "*") clears it without disabling the protection
+        # globally. --global here writes to this runner-account's git
+        # config, so it only needs to happen once per job/account, but
+        # it's cheap enough to just run every time.
+        shell: powershell
+        run: |
+          git config --global --add safe.directory "$env:GITHUB_WORKSPACE"
+          Write-Host "Marked $env:GITHUB_WORKSPACE as a safe.directory."
+
       - name: Determine next version from tags
         # Computed BEFORE the deploy so version.py can be stamped with the
         # number this build will carry. The tag itself is only pushed after
