@@ -105,7 +105,7 @@ jobs:
         run: |
           $shortSha = $env:GITHUB_SHA.Substring(0,7)
           $buildDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss 'UTC'")
-          $versionFile = "version.py"
+          $versionFile = "app/version.py"
 
           (Get-Content $versionFile) `
             -replace 'APP_VERSION = ".*"', "APP_VERSION = `"$env:NEW_VERSION`"" `
