@@ -144,7 +144,7 @@ jobs:
           # wiping every log written since the last deploy.
           robocopy `
             "$env:GITHUB_WORKSPACE" `
-            "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD" `
+            "C:\apps\concept-tracking-CICD\api" `
             /MIR `
             /XD venv .git __pycache__ iislogs `
             /XF .env
@@ -162,7 +162,7 @@ jobs:
           SECRETS_JSON: ${{ toJSON(secrets) }}
         run: |
           $secretsJson = $env:SECRETS_JSON | ConvertFrom-Json
-          $envPath = "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD\.env"
+          $envPath = "C:\apps\concept-tracking-CICD\api\.env"
 
           $lines = @()
           foreach ($prop in $secretsJson.PSObject.Properties) {
@@ -179,7 +179,7 @@ jobs:
       - name: Validate .env has required keys
         shell: powershell
         run: |
-          $envPath = "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD\.env"
+          $envPath = "C:\apps\concept-tracking-CICD\api\.env"
           $requiredKeys = @(
               "AUTH_SECRET_KEY",
               "AUTH_ALGORITHM",
@@ -213,7 +213,7 @@ jobs:
       - name: Ensure IIS logs folder exists
         shell: powershell
         run: |
-          $logFolder = "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD\iislogs"
+          $logFolder = "C:\apps\concept-tracking-CICD\api\iislogs"
           if (!(Test-Path $logFolder)) {
               New-Item -ItemType Directory -Path $logFolder | Out-Null
               Write-Host "Created iislogs folder."
@@ -224,7 +224,7 @@ jobs:
 
       - name: Create virtual environment if needed
         shell: powershell
-        working-directory: C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD
+        working-directory: C:\apps\concept-tracking-CICD\api
         run: |
           if (!(Test-Path ".\venv")) {
             py -m venv venv
@@ -232,7 +232,7 @@ jobs:
 
       - name: Install dependencies
         shell: powershell
-        working-directory: C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD
+        working-directory: C:\apps\concept-tracking-CICD\api
         run: |
           .\venv\Scripts\python.exe -m pip install --upgrade pip
           .\venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -298,7 +298,7 @@ jobs:
                   Write-Host "Never saw build $expectedSha - last response came from $lastSeenSha."
                   Write-Host "The new process did not take over (check web.config / venv path / app pool identity)."
               }
-              $logFolder = "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD\iislogs"
+              $logFolder = "C:\apps\concept-tracking-CICD\api\iislogs"
               $latestLog = Get-ChildItem -Path $logFolder -Filter "fastapi_*.log" -ErrorAction SilentlyContinue |
                            Sort-Object LastWriteTime -Descending |
                            Select-Object -First 1
