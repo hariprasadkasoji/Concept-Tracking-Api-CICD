@@ -22,7 +22,7 @@ jobs:
         run: py -m pip install -r requirements.txt
 
       - name: Check syntax
-        run: py -m py_compile main.py
+        run: py -m py_compile api/main.py
 
   deploy:
     needs: build
