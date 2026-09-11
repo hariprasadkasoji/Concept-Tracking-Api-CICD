@@ -40,6 +40,25 @@ jobs:
           fetch-depth: 0       # full history so tags are available
           fetch-tags: true
 
+      - name: Add Git to PATH
+        # actions/checkout uses its own bundled git resolution, but the
+        # manual `git` calls further down in this job (Determine next
+        # version, Tag release) run through plain PowerShell and rely on
+        # PATH. If this runner is registered as a Windows service, the
+        # service account's PATH may not include git even though it's on
+        # PATH for an interactive user session. Adding it to GITHUB_PATH
+        # here makes it available to every remaining step in this job.
+        shell: powershell
+        run: |
+          $gitDir = "C:\Users\hkasoji\AppData\Local\Programs\Git\cmd"
+          if (Test-Path "$gitDir\git.exe") {
+              Add-Content -Path $env:GITHUB_PATH -Value $gitDir
+              Write-Host "Added $gitDir to PATH for remaining steps."
+          } else {
+              Write-Host "git.exe not found at $gitDir - check the install path."
+              exit 1
+          }
+
       - name: Determine next version from tags
         # Computed BEFORE the deploy so version.py can be stamped with the
         # number this build will carry. The tag itself is only pushed after
@@ -279,12 +298,28 @@ jobs:
       - name: Tag release
         # Only reached when the health check passed - a failed deploy
         # never consumes a version number or creates a tag.
+        # Prefers git on PATH (set up by "Add Git to PATH" above); falls
+        # back to the known install path if PATH somehow didn't take.
         shell: powershell
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$env:NEW_VERSION" -m "Release of $env:NEW_VERSION"
-          git push origin "$env:NEW_VERSION"
+          $gitCmd = Get-Command git -ErrorAction SilentlyContinue
+          if ($gitCmd) {
+              $git = "git"
+          } else {
+              $fallback = "C:\Users\hkasoji\AppData\Local\Programs\Git\cmd\git.exe"
+              if (Test-Path $fallback) {
+                  Write-Host "git not found on PATH - falling back to $fallback"
+                  $git = $fallback
+              } else {
+                  Write-Host "git not found on PATH and fallback path missing: $fallback"
+                  exit 1
+              }
+          }
+
+          & $git config user.name "github-actions[bot]"
+          & $git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          & $git tag -a "$env:NEW_VERSION" -m "Release of $env:NEW_VERSION"
+          & $git push origin "$env:NEW_VERSION"
 
       - name: Package deploy artifact
         shell: powershell
