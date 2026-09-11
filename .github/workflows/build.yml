@@ -34,20 +34,17 @@ jobs:
     timeout-minutes: 15        # hard ceiling so a hang never runs for hours
 
     steps:
-      - name: Checkout latest code
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0       # full history so tags are available
-          fetch-tags: true
-
       - name: Add Git to PATH
-        # actions/checkout uses its own bundled git resolution, but the
-        # manual `git` calls further down in this job (Determine next
-        # version, Tag release) run through plain PowerShell and rely on
-        # PATH. If this runner is registered as a Windows service, the
-        # service account's PATH may not include git even though it's on
-        # PATH for an interactive user session. Adding it to GITHUB_PATH
-        # here makes it available to every remaining step in this job.
+        # Must run BEFORE checkout. actions/checkout probes for a working
+        # `git` on PATH; if it can't find one it silently falls back to
+        # downloading the repo as a tarball via the API instead of doing a
+        # real `git clone` - which produces a workspace with files but NO
+        # .git folder, so every git command later in this job fails with
+        # "not a git repository". If this runner is registered as a
+        # Windows service, the service account's PATH may not include git
+        # even though it's on PATH for an interactive user session.
+        # Adding it to GITHUB_PATH here makes it available to checkout
+        # and to every remaining step in this job.
         shell: powershell
         run: |
           $gitDir = "C:\Users\hkasoji\AppData\Local\Programs\Git\cmd"
@@ -58,6 +55,12 @@ jobs:
               Write-Host "git.exe not found at $gitDir - check the install path."
               exit 1
           }
+
+      - name: Checkout latest code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0       # full history so tags are available
+          fetch-tags: true
 
       - name: Determine next version from tags
         # Computed BEFORE the deploy so version.py can be stamped with the
