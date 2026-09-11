@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.core.sql_connection import init_pool, close_pool
 from app.core.logger_config import setup_logging
 from app.api import *
-from version import APP_VERSION, BUILD_SHA, BUILD_DATE, BUILD_BRANCH
+from app.version import APP_VERSION, BUILD_SHA, BUILD_DATE, BUILD_BRANCH
 
 
 
