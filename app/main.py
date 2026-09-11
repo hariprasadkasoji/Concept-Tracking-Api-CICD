@@ -9,6 +9,8 @@ from app.core.config import settings
 from app.core.sql_connection import init_pool, close_pool
 from app.core.logger_config import setup_logging
 from app.api import *
+from version import APP_VERSION, BUILD_SHA, BUILD_DATE, BUILD_BRANCH
+
 
 
 
@@ -58,6 +60,15 @@ app.add_middleware(
     allow_headers=["*"],              # Allows all headers
     allow_origins=origins,  # allows all origins
 )
+
+@app.get("/version")
+def version():
+    return {
+        "version": APP_VERSION,
+        "sha": BUILD_SHA,
+        "date": BUILD_DATE,
+        "branch": BUILD_BRANCH,
+    }
 
 
 

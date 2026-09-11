@@ -29,7 +29,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: self-hosted
     permissions:
-      contents: write        # required to push tags
+      contents: write        # required to push tags and create releases
     environment: development   # <-- pulls secrets from this Environment
     timeout-minutes: 15        # hard ceiling so a hang never runs for hours
 
@@ -38,6 +38,45 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0       # full history so tags are available
+          fetch-tags: true
+
+      - name: Determine next version from tags
+        # Computed BEFORE the deploy so version.py can be stamped with the
+        # number this build will carry. The tag itself is only pushed after
+        # the health check passes - a failed deploy never gets a version.
+        shell: powershell
+        run: |
+          git fetch --tags --force
+          $tags = git tag --list "v*.*.*" | Where-Object { $_ -match '^v\d+\.\d+\.\d+$' }
+          if ($tags) {
+            $latest = $tags | Sort-Object { [version]($_ -replace '^v','') } | Select-Object -Last 1
+          } else {
+            $latest = "v0.0.0"
+          }
+          $latest -match '^v(\d+)\.(\d+)\.(\d+)$' | Out-Null
+          $newVersion = "v$($Matches[1]).$($Matches[2]).$([int]$Matches[3] + 1)"
+          Write-Host "Latest tag: $latest -> deploying as $newVersion"
+          "NEW_VERSION=$newVersion" >> $env:GITHUB_ENV
+
+      - name: Stamp build version
+        # Injects version/SHA/date into version.py BEFORE the robocopy copy,
+        # so the deployed code (and the release zip below) carries it.
+        # This is what makes the health check able to prove WHICH build
+        # is answering - see /version in main.py.
+        shell: powershell
+        run: |
+          $shortSha = $env:GITHUB_SHA.Substring(0,7)
+          $buildDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss 'UTC'")
+          $versionFile = "version.py"
+
+          (Get-Content $versionFile) `
+            -replace 'APP_VERSION = ".*"', "APP_VERSION = `"$env:NEW_VERSION`"" `
+            -replace 'BUILD_SHA = ".*"', "BUILD_SHA = `"$shortSha`"" `
+            -replace 'BUILD_DATE = ".*"', "BUILD_DATE = `"$buildDate`"" `
+            -replace 'BUILD_BRANCH = ".*"', "BUILD_BRANCH = `"main`"" |
+            Set-Content $versionFile
+
+          Write-Host "Stamped $versionFile as $env:NEW_VERSION ($shortSha)"
 
       - name: Stop IIS App Pool
         shell: powershell
@@ -62,11 +101,14 @@ jobs:
       - name: Copy backend files
         shell: powershell
         run: |
+          # /XD iislogs is required: /MIR mirrors the repo onto the target and
+          # would DELETE the server's iislogs folder (it is not in the repo),
+          # wiping every log written since the last deploy.
           robocopy `
             "$env:GITHUB_WORKSPACE" `
             "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD" `
             /MIR `
-            /XD venv .git __pycache__ `
+            /XD venv .git __pycache__ iislogs `
             /XF .env
 
           if ($LASTEXITCODE -ge 8) {
@@ -83,17 +125,17 @@ jobs:
         run: |
           $secretsJson = $env:SECRETS_JSON | ConvertFrom-Json
           $envPath = "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD\.env"
-      
+
           $lines = @()
           foreach ($prop in $secretsJson.PSObject.Properties) {
               if ($prop.Name -ne "github_token") {
                   $lines += "$($prop.Name)=$($prop.Value)"
               }
           }
-      
+
           # Use UTF8 WITHOUT BOM to avoid corrupting the first key
           [System.IO.File]::WriteAllLines($envPath, $lines, [System.Text.UTF8Encoding]::new($false))
-      
+
           Write-Host ".env file written with $($lines.Count) variables."
 
       - name: Validate .env has required keys
@@ -166,23 +208,43 @@ jobs:
           Write-Host "App pool started."
 
       - name: Health Check
+        # Two questions, like the reference pipeline:
+        #   /version  is this the build we just deployed? (verified by SHA)
+        #   /docs     can it actually serve?
+        # /docs alone cannot distinguish the new process from a stale one,
+        # and a 200 from /version alone would not prove the app works.
         shell: powershell
         run: |
+          $expectedSha = $env:GITHUB_SHA.Substring(0,7)
           $maxAttempts = 30
           $healthy = $false
           $startTime = Get-Date
+          $lastSeenSha = $null
 
           foreach ($i in 1..$maxAttempts) {
+              $elapsed = [math]::Round(((Get-Date) - $startTime).TotalSeconds, 1)
+
+              # Question 1: which build is answering?
+              $sha = $null
               try {
-                  # --max-time / --connect-timeout bound each call so a hung
-                  # backend can't stall this loop for minutes per attempt.
-                  $response = curl.exe -k -s -o NUL -w "%{http_code}" --max-time 5 --connect-timeout 3 https://localhost:6400/docs
-              } catch {
-                  $response = "ERR"
+                  $body = curl.exe -k -s --max-time 5 --connect-timeout 3 https://localhost:6400/version
+                  if ($body) { $sha = ($body | ConvertFrom-Json).sha }
+              } catch { }
+
+              if ($sha -ne $expectedSha) {
+                  if ($sha -and $sha -ne $lastSeenSha) {
+                      Write-Host "Attempt $i/$maxAttempts (${elapsed}s): serving '$sha' - waiting for '$expectedSha'"
+                      $lastSeenSha = $sha
+                  } else {
+                      Write-Host "Attempt $i/$maxAttempts (${elapsed}s): no version response yet (last: '$lastSeenSha')"
+                  }
+                  Start-Sleep -Seconds 5
+                  continue
               }
 
-              $elapsed = [math]::Round(((Get-Date) - $startTime).TotalSeconds, 1)
-              Write-Host "Attempt $i/$maxAttempts (${elapsed}s elapsed): HTTP $response"
+              # Question 2: can it serve?
+              $response = curl.exe -k -s -o NUL -w "%{http_code}" --max-time 5 --connect-timeout 3 https://localhost:6400/docs
+              Write-Host "Attempt $i/$maxAttempts (${elapsed}s): build $expectedSha up, /docs returned HTTP $response"
 
               if ($response -eq "200") {
                   Write-Host "Backend is healthy after ${elapsed}s."
@@ -194,6 +256,10 @@ jobs:
 
           if (-not $healthy) {
               Write-Host "Health check failed after $maxAttempts attempts."
+              if ($lastSeenSha -and $lastSeenSha -ne $expectedSha) {
+                  Write-Host "Never saw build $expectedSha - last response came from $lastSeenSha."
+                  Write-Host "The new process did not take over (check web.config / venv path / app pool identity)."
+              }
               $logFolder = "C:\apps\concept-tracking-CICD\api\Concept-Tracking-Api-CICD\iislogs"
               $latestLog = Get-ChildItem -Path $logFolder -Filter "fastapi_*.log" -ErrorAction SilentlyContinue |
                            Sort-Object LastWriteTime -Descending |
@@ -210,47 +276,49 @@ jobs:
               exit 1
           }
 
-      - name: Increment version tag
+      - name: Tag release
+        # Only reached when the health check passed - a failed deploy
+        # never consumes a version number or creates a tag.
         shell: powershell
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          DEPLOY_SHA: ${{ github.sha }}
         run: |
-          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-          $api = "https://api.github.com"
-          $headers = @{
-              Authorization            = "Bearer $env:GITHUB_TOKEN"
-              Accept                   = "application/vnd.github+json"
-              "X-GitHub-Api-Version"   = "2022-11-28"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$env:NEW_VERSION" -m "Release of $env:NEW_VERSION"
+          git push origin "$env:NEW_VERSION"
+
+      - name: Package deploy artifact
+        shell: powershell
+        run: |
+          $staging = "$env:RUNNER_TEMP\release\ConceptTrackingApi"
+          if (Test-Path "$env:RUNNER_TEMP\release") {
+              Remove-Item "$env:RUNNER_TEMP\release" -Recurse -Force
           }
+          New-Item -ItemType Directory -Path $staging -Force | Out-Null
 
-          # Fetch existing tags
-          $refs = Invoke-RestMethod -Uri "$api/repos/$env:REPO/git/matching-refs/tags/" -Headers $headers
-          $versions = $refs |
-              ForEach-Object { $_.ref -replace '^refs/tags/v', '' } |
-              Where-Object { $_ -match '^\d+\.\d+\.\d+$' } |
-              ForEach-Object { [version]$_ } |
-              Sort-Object -Descending
+          robocopy "$env:GITHUB_WORKSPACE" $staging /E `
+            /XD venv .venv .git __pycache__ .pytest_cache iislogs `
+            /XF .env *.log *.pyc
+          if ($LASTEXITCODE -ge 8) { exit 1 }
 
-          if ($versions) {
-              $latest = $versions[0]
-          } else {
-              $latest = [version]"0.0.0"
-          }
-          Write-Host "Latest tag: v$latest"
+          $zip = "$env:RUNNER_TEMP\ConceptTrackingApi-$env:NEW_VERSION.zip"
+          Compress-Archive -Path "$staging\*" -DestinationPath $zip -Force
+          Write-Host "Packaged $zip"
 
-          $newTag = "v$($latest.Major).$($latest.Minor).$($latest.Build + 1)"
-          Write-Host "New tag: $newTag"
+          "RELEASE_ZIP=$zip" >> $env:GITHUB_ENV
+          exit 0
 
-          # Create lightweight tag on the deployed commit
-          $body = @{ ref = "refs/tags/$newTag"; sha = $env:DEPLOY_SHA } | ConvertTo-Json
-          try {
-              Invoke-RestMethod -Method Post -Uri "$api/repos/$env:REPO/git/refs" `
-                  -Headers $headers -Body $body -ContentType "application/json"
-              Write-Host "Created tag $newTag on commit $env:DEPLOY_SHA"
-          } catch {
-              Write-Host "Failed to create tag: $($_.Exception.Message)"
-              if ($_.ErrorDetails) { Write-Host $_.ErrorDetails.Message }
-              exit 1
-          }
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.NEW_VERSION }}
+          name: ${{ env.NEW_VERSION }}
+          generate_release_notes: true
+          body: |
+            Release of ${{ env.NEW_VERSION }}
+
+            Commit: ${{ github.sha }}
+
+            `ConceptTrackingApi-${{ env.NEW_VERSION }}.zip` is the exact code deployed to the
+            development environment, with `version.py` already stamped. Deploy this artifact
+            for UAT - do not use the auto-generated "Source code" zip, its version is stale.
+          files: ${{ env.RELEASE_ZIP }}
